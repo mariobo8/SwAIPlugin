@@ -64,20 +64,29 @@ class SolidWorksCommandParser:
             # Try to extract JSON from the response (handle multiple JSON blocks)
             json_blocks = self._extract_all_json(ai_response)
             
+            valid_commands = []
             for json_str in json_blocks:
                 try:
                     command = json.loads(json_str)
                     
                     # Validate command structure
                     if self._validate_command(command):
-                        return {
-                            "success": True,
-                            "command": command,
-                            "description": command.get("description", ""),
-                            "raw_response": ai_response
-                        }
+                        valid_commands.append(command)
                 except json.JSONDecodeError:
                     continue
+            
+            # If we found valid commands
+            if valid_commands:
+                # Return first command for backward compatibility
+                # but also include all commands for sequential execution
+                return {
+                    "success": True,
+                    "command": valid_commands[0],
+                    "commands": valid_commands,  # All commands for sequential execution
+                    "command_count": len(valid_commands),
+                    "description": valid_commands[0].get("description", ""),
+                    "raw_response": ai_response
+                }
             
             # If no valid JSON found, try to infer command from text
             inferred = self._infer_command(ai_response)
@@ -85,6 +94,8 @@ class SolidWorksCommandParser:
                 return {
                     "success": True,
                     "command": inferred,
+                    "commands": [inferred],
+                    "command_count": 1,
                     "description": ai_response,
                     "raw_response": ai_response,
                     "inferred": True
@@ -94,6 +105,8 @@ class SolidWorksCommandParser:
             return {
                 "success": False,
                 "command": None,
+                "commands": [],
+                "command_count": 0,
                 "description": ai_response,
                 "raw_response": ai_response,
                 "error": "Could not parse command from response"
@@ -103,6 +116,8 @@ class SolidWorksCommandParser:
             return {
                 "success": False,
                 "command": None,
+                "commands": [],
+                "command_count": 0,
                 "description": ai_response,
                 "raw_response": ai_response,
                 "error": f"Parsing error: {str(e)}"

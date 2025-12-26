@@ -123,11 +123,61 @@ namespace SwAIPlugin
                 string cleanResponse = CleanResponseForDisplay(parsed.Message);
                 AppendMessage("AI", cleanResponse, colorAI);
 
-                // Auto-execute if command found
-                if (parsed.Command != null)
+                // Auto-execute if commands found (supports multiple commands)
+                if (parsed.Commands != null && parsed.Commands.Count > 0)
                 {
-                    SetBusy(true, "Executing...");
+                    SetBusy(true, $"Executing {parsed.Commands.Count} command(s)...");
                     await Task.Delay(100); // Brief pause for UI update
+                    
+                    int successCount = 0;
+                    int failCount = 0;
+                    
+                    for (int i = 0; i < parsed.Commands.Count; i++)
+                    {
+                        var cmd = parsed.Commands[i];
+                        if (parsed.Commands.Count > 1)
+                        {
+                            SetBusy(true, $"Executing step {i + 1}/{parsed.Commands.Count}...");
+                        }
+                        
+                        string result = ExecuteCommand(cmd);
+                        
+                        if (result.StartsWith("Success"))
+                        {
+                            AppendMessage("✓", result, colorSuccess);
+                            successCount++;
+                        }
+                        else
+                        {
+                            AppendMessage("✗", result, colorError);
+                            failCount++;
+                        }
+                        
+                        // Brief pause between commands for model to update
+                        if (i < parsed.Commands.Count - 1)
+                        {
+                            await Task.Delay(200);
+                        }
+                    }
+                    
+                    // Summary if multiple commands
+                    if (parsed.Commands.Count > 1)
+                    {
+                        if (failCount == 0)
+                        {
+                            AppendMessage("✓", $"All {successCount} commands completed successfully!", colorSuccess);
+                        }
+                        else
+                        {
+                            AppendMessage("⚠", $"Completed: {successCount} succeeded, {failCount} failed", colorError);
+                        }
+                    }
+                }
+                else if (parsed.Command != null)
+                {
+                    // Fallback for single command (backward compatibility)
+                    SetBusy(true, "Executing...");
+                    await Task.Delay(100);
                     
                     string result = ExecuteCommand(parsed.Command);
                     
@@ -312,20 +362,154 @@ namespace SwAIPlugin
             var result = new ParsedResponse();
             result.Message = ExtractField(json, "response") ?? json;
             
-            // Try to find command in response
-            string cmdJson = ExtractField(json, "command");
-            if (!string.IsNullOrEmpty(cmdJson) && cmdJson != "null")
+            // Try to find multiple commands in "commands" array
+            string commandsJson = ExtractCommandsArray(json);
+            if (!string.IsNullOrEmpty(commandsJson))
             {
-                result.Command = ParseCommandDict(cmdJson);
+                result.Commands = ParseCommandsArray(commandsJson);
             }
             
-            // Also try to find JSON in the message itself
-            if (result.Command == null)
+            // Try to find single command in response
+            if (result.Commands.Count == 0)
             {
-                result.Command = FindCommandInText(result.Message);
+                string cmdJson = ExtractField(json, "command");
+                if (!string.IsNullOrEmpty(cmdJson) && cmdJson != "null")
+                {
+                    var cmd = ParseCommandDict(cmdJson);
+                    if (cmd != null)
+                    {
+                        result.Commands.Add(cmd);
+                    }
+                }
+            }
+            
+            // Also try to find JSON blocks in the message itself
+            if (result.Commands.Count == 0)
+            {
+                var cmdsInText = FindAllCommandsInText(result.Message);
+                if (cmdsInText.Count > 0)
+                {
+                    result.Commands = cmdsInText;
+                }
+            }
+            
+            // Set Command for backward compatibility
+            if (result.Commands.Count > 0)
+            {
+                result.Command = result.Commands[0];
             }
             
             return result;
+        }
+
+        private string ExtractCommandsArray(string json)
+        {
+            // Find "commands": [ ... ]
+            int idx = json.IndexOf("\"commands\"");
+            if (idx < 0) return null;
+            
+            int bracketStart = json.IndexOf('[', idx);
+            if (bracketStart < 0) return null;
+            
+            int bracketCount = 0;
+            int bracketEnd = -1;
+            
+            for (int i = bracketStart; i < json.Length; i++)
+            {
+                if (json[i] == '[') bracketCount++;
+                else if (json[i] == ']') bracketCount--;
+                
+                if (bracketCount == 0)
+                {
+                    bracketEnd = i;
+                    break;
+                }
+            }
+            
+            if (bracketEnd > bracketStart)
+            {
+                return json.Substring(bracketStart, bracketEnd - bracketStart + 1);
+            }
+            
+            return null;
+        }
+
+        private List<Dictionary<string, object>> ParseCommandsArray(string arrayJson)
+        {
+            var commands = new List<Dictionary<string, object>>();
+            
+            // Find each JSON object in the array
+            int braceCount = 0;
+            int objStart = -1;
+            
+            for (int i = 0; i < arrayJson.Length; i++)
+            {
+                if (arrayJson[i] == '{')
+                {
+                    if (braceCount == 0) objStart = i;
+                    braceCount++;
+                }
+                else if (arrayJson[i] == '}')
+                {
+                    braceCount--;
+                    if (braceCount == 0 && objStart >= 0)
+                    {
+                        string cmdJson = arrayJson.Substring(objStart, i - objStart + 1);
+                        var cmd = ParseCommandDict(cmdJson);
+                        if (cmd != null)
+                        {
+                            commands.Add(cmd);
+                        }
+                        objStart = -1;
+                    }
+                }
+            }
+            
+            return commands;
+        }
+
+        private List<Dictionary<string, object>> FindAllCommandsInText(string text)
+        {
+            var commands = new List<Dictionary<string, object>>();
+            int searchStart = 0;
+            
+            while (searchStart < text.Length)
+            {
+                int braceStart = text.IndexOf('{', searchStart);
+                if (braceStart < 0) break;
+                
+                int braceCount = 0;
+                int braceEnd = -1;
+                
+                for (int i = braceStart; i < text.Length; i++)
+                {
+                    if (text[i] == '{') braceCount++;
+                    else if (text[i] == '}') braceCount--;
+                    
+                    if (braceCount == 0)
+                    {
+                        braceEnd = i;
+                        break;
+                    }
+                }
+                
+                if (braceEnd > braceStart)
+                {
+                    string jsonPart = text.Substring(braceStart, braceEnd - braceStart + 1);
+                    var cmd = ParseCommandDict(jsonPart);
+                    if (cmd != null)
+                    {
+                        commands.Add(cmd);
+                    }
+                    searchStart = braceEnd + 1;
+                }
+                else
+                {
+                    searchStart = braceStart + 1;
+                }
+            }
+            
+            return commands;
         }
 
         private Dictionary<string, object> FindCommandInText(string text)
@@ -546,6 +730,7 @@ namespace SwAIPlugin
         {
             public string Message { get; set; }
             public Dictionary<string, object> Command { get; set; }
+            public List<Dictionary<string, object>> Commands { get; set; } = new List<Dictionary<string, object>>();
         }
     }
 }
