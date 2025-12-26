@@ -61,6 +61,7 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
+    <Compile Include="FeatureWalker.cs" />
     <Compile Include="ModelAnalyzer.cs" />
     <Compile Include="SolidWorksCommandExecutor.cs" />
     <Compile Include="SwAddin.cs" />

@@ -165,3 +165,24 @@ Desktop.ini
 *.temp
 *.log
 
+# =========================================
+# Training Data Pipeline - DO NOT COMMIT
+# =========================================
+
+# Input folder for SolidWorks parts to process
+Training_Input_Parts/
+
+# Output folder containing raw training data
+Training_Output_Data/
+
+# SolidWorks part files (large binary files)
+*.SLDPRT
+*.sldprt
+*.SLDASM
+*.sldasm
+*.SLDDRW
+*.slddrw
+
+# Generated training data file
+train.jsonl
+

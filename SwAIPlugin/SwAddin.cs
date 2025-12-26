@@ -25,6 +25,7 @@ namespace SwAIPlugin
         // Constants for our button
         public const int MAIN_CMD_GROUP_ID = 5;
         public const int MAIN_ITEM_ID = 0;
+        public const int TRAINING_ITEM_ID = 1;
 
         public bool ConnectToSW(object ThisSW, int Cookie)
         {
@@ -126,6 +127,19 @@ namespace SwAIPlugin
             int menuToolbarOption = (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem;
             int cmdIndex = cmdGroup.AddCommandItem2("Launch AI", -1, hint, toolTip, 0, "EnableAI", "EnableUI", MAIN_ITEM_ID, menuToolbarOption);
 
+            // Add Training Data Generation button
+            int trainingCmdIndex = cmdGroup.AddCommandItem2(
+                "Generate Training Data",
+                -1,
+                "Generate training data from parts in Training_Input_Parts folder",
+                "Training Data Generator",
+                0,
+                "GenerateTrainingData",
+                "EnableTrainingUI",
+                TRAINING_ITEM_ID,
+                menuToolbarOption
+            );
+
             cmdGroup.HasToolbar = true;
             cmdGroup.HasMenu = true;
             cmdGroup.Activate();
@@ -156,6 +170,91 @@ namespace SwAIPlugin
         }
 
         public int EnableUI()
+        {
+            return 1; // 1 = Enabled
+        }
+
+        /// <summary>
+        /// Callback for the Generate Training Data button
+        /// </summary>
+        public void GenerateTrainingData()
+        {
+            try
+            {
+                // Get the DLL location to find the relative paths
+                string dllPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                
+                // Navigate up from bin/Debug to the solution root, then to the folders
+                // DLL is at: SwAIPlugin/bin/Debug/SwAIPlugin.dll
+                // Folders are at: Training_Input_Parts and Training_Output_Data
+                string solutionRoot = Path.GetFullPath(Path.Combine(dllPath, "..", "..", ".."));
+                
+                string inputFolder = Path.Combine(solutionRoot, "Training_Input_Parts");
+                string outputFolder = Path.Combine(solutionRoot, "Training_Output_Data");
+
+                // Ensure folders exist
+                if (!Directory.Exists(inputFolder))
+                {
+                    Directory.CreateDirectory(inputFolder);
+                    swApp.SendMsgToUser($"Created input folder:\n{inputFolder}\n\nPlease add .SLDPRT files and run again.");
+                    return;
+                }
+
+                // Check if there are any parts to process
+                string[] partFiles = Directory.GetFiles(inputFolder, "*.SLDPRT", SearchOption.TopDirectoryOnly);
+                if (partFiles.Length == 0)
+                {
+                    partFiles = Directory.GetFiles(inputFolder, "*.sldprt", SearchOption.TopDirectoryOnly);
+                }
+
+                if (partFiles.Length == 0)
+                {
+                    swApp.SendMsgToUser($"No .SLDPRT files found in:\n{inputFolder}\n\nPlease add SolidWorks part files and run again.");
+                    return;
+                }
+
+                // Confirm with user
+                int response = swApp.SendMsgToUser2(
+                    $"Training Data Generator\n\n" +
+                    $"Found {partFiles.Length} part file(s) to process.\n\n" +
+                    $"Input: {inputFolder}\n" +
+                    $"Output: {outputFolder}\n\n" +
+                    $"This will open each part, step through features,\nand capture screenshots + metadata.\n\n" +
+                    $"Continue?",
+                    (int)swMessageBoxIcon_e.swMbQuestion,
+                    (int)swMessageBoxBtn_e.swMbYesNo
+                );
+
+                if (response != (int)swMessageBoxResult_e.swMbHitYes)
+                {
+                    return;
+                }
+
+                // Create and run the FeatureWalker
+                FeatureWalker walker = new FeatureWalker(swApp, inputFolder, outputFolder);
+                string log = walker.ProcessFolder();
+
+                // Save the log
+                string logPath = Path.Combine(outputFolder, "walker_log.txt");
+                File.WriteAllText(logPath, log);
+
+                // Show completion message
+                swApp.SendMsgToUser2(
+                    $"Training data generation complete!\n\n" +
+                    $"Output saved to:\n{outputFolder}\n\n" +
+                    $"Log saved to:\n{logPath}\n\n" +
+                    $"Next step: Run the Python script to generate train.jsonl",
+                    (int)swMessageBoxIcon_e.swMbInformation,
+                    (int)swMessageBoxBtn_e.swMbOk
+                );
+            }
+            catch (Exception ex)
+            {
+                swApp.SendMsgToUser($"Error generating training data:\n{ex.Message}");
+            }
+        }
+
+        public int EnableTrainingUI()
         {
             return 1; // 1 = Enabled
         }
