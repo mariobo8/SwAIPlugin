@@ -1,4 +1,5 @@
 import os
+import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -50,7 +51,7 @@ if OPENAI_AVAILABLE:
         except Exception as e:
             print(f"❌ Failed to initialize OpenAI client: {e}")
             print("💡 Try updating: pip install --upgrade openai httpx")
-            OPENAI_AVAILABLE = False  # Disable OpenAI to prevent further errors
+            OPENAI_AVAILABLE = False
     else:
         print("⚠️  OPENAI_API_KEY not found in environment variables")
 
@@ -63,7 +64,7 @@ if ANTHROPIC_AVAILABLE:
         except Exception as e:
             print(f"❌ Failed to initialize Claude client: {e}")
             print("💡 Try updating: pip install --upgrade anthropic")
-            ANTHROPIC_AVAILABLE = False  # Disable Claude to prevent further errors
+            ANTHROPIC_AVAILABLE = False
     else:
         print("⚠️  ANTHROPIC_API_KEY not found in environment variables")
 
@@ -82,44 +83,201 @@ if PARSER_AVAILABLE:
     print("✅ Command parser initialized")
 
 # System prompt for SolidWorks AI Assistant
-SYSTEM_PROMPT = """You are a SolidWorks CAD assistant. Your role is to help users create and modify 3D models using SolidWorks API commands.
+SYSTEM_PROMPT = """You are a SolidWorks CAD assistant with vision capabilities. Your role is to help users create and modify 3D models using SolidWorks API commands.
 
-When users ask you to:
-- Create geometry (boxes, cylinders, holes, etc.)
-- Modify existing features
-- Perform design operations
-- Review or analyze models
+When analyzing a model (with or without an image), describe what you see and understand about the geometry.
 
-You should respond with:
-1. A natural language explanation of what you'll do
-2. A structured command in JSON format that can be executed by the SolidWorks API
+When users ask you to create or modify geometry, you MUST respond with:
+1. A brief natural language explanation of what you'll do
+2. A structured JSON command that can be executed by SolidWorks
 
-Command format:
+IMPORTANT: Always include the JSON command block in your response when the user requests a creation or modification.
+
+Available command formats:
+
+CREATE BOX/RECTANGLE:
 {
-    "action": "create_feature|modify_feature|analyze|review",
-    "type": "box|cylinder|hole|extrude|cut|etc",
+    "action": "create",
+    "type": "box",
     "parameters": {
         "width": 100,
         "height": 50,
         "depth": 25,
         "units": "mm"
-    },
-    "description": "Human-readable description"
+    }
 }
 
-If the user's request is unclear or cannot be translated to a SolidWorks command, explain what you understood and ask for clarification.
+CREATE CYLINDER:
+{
+    "action": "create",
+    "type": "cylinder",
+    "parameters": {
+        "diameter": 50,
+        "height": 100,
+        "units": "mm"
+    }
+}
 
-IMPORTANT: If you receive model context information, use it to understand the current state of the model and provide context-aware responses."""
+CREATE THREADED HOLE (M4, M5, M6, M8, M10, etc.):
+{
+    "action": "create",
+    "type": "threaded_hole",
+    "parameters": {
+        "thread_size": "M6",
+        "depth": 15,
+        "count": 4,
+        "spacing": 25,
+        "x": 10,
+        "y": 10,
+        "units": "mm"
+    }
+}
 
-# System prompt for model analysis
-ANALYSIS_PROMPT = """You are a SolidWorks CAD expert. Analyze the provided model information and describe:
-1. What type of model it is (Part, Assembly, Drawing)
-2. Key features and their purposes
-3. Overall geometry and complexity
-4. Any notable characteristics (dimensions, mass properties, etc.)
-5. Potential design considerations or observations
+CREATE SIMPLE HOLE:
+{
+    "action": "create",
+    "type": "hole",
+    "parameters": {
+        "diameter": 10,
+        "depth": 20,
+        "through_all": false,
+        "x": 0,
+        "y": 0,
+        "units": "mm"
+    }
+}
 
-Provide a clear, concise analysis that helps the user understand what the AI can "see" about their model."""
+CREATE FILLET:
+{
+    "action": "create",
+    "type": "fillet",
+    "parameters": {
+        "radius": 5,
+        "units": "mm"
+    }
+}
+
+CREATE CHAMFER:
+{
+    "action": "create",
+    "type": "chamfer",
+    "parameters": {
+        "distance": 2,
+        "angle": 45,
+        "units": "mm"
+    }
+}
+
+MODIFY DIMENSION (make longer/shorter/wider):
+{
+    "action": "modify",
+    "type": "dimension",
+    "parameters": {
+        "delta": 10,
+        "units": "mm"
+    }
+}
+
+CREATE SHELL:
+{
+    "action": "create",
+    "type": "shell",
+    "parameters": {
+        "thickness": 2,
+        "units": "mm"
+    }
+}
+
+CREATE LINEAR PATTERN:
+{
+    "action": "create",
+    "type": "linear_pattern",
+    "parameters": {
+        "count_x": 5,
+        "count_y": 3,
+        "spacing_x": 20,
+        "spacing_y": 15,
+        "units": "mm"
+    }
+}
+
+CREATE NEW EMPTY PART (when user just wants a blank part):
+{
+    "action": "create_part",
+    "type": "empty",
+    "parameters": {}
+}
+
+CREATE NEW PART WITH GEOMETRY (when user specifies shape):
+{
+    "action": "create_part",
+    "type": "box",
+    "parameters": {
+        "width": 100,
+        "height": 100,
+        "depth": 50,
+        "units": "mm"
+    }
+}
+
+ADD BOSS/EXTRUSION ON EXISTING FACE (e.g., rectangle on top of cylinder):
+{
+    "action": "create",
+    "type": "boss_on_face",
+    "parameters": {
+        "width": 10,
+        "height": 10,
+        "depth": 5,
+        "face": "top",
+        "x": 0,
+        "y": 0,
+        "units": "mm"
+    }
+}
+
+ADD CUT/POCKET ON EXISTING FACE:
+{
+    "action": "create",
+    "type": "cut_on_face",
+    "parameters": {
+        "width": 10,
+        "height": 10,
+        "depth": 5,
+        "face": "top",
+        "through_all": false,
+        "x": 0,
+        "y": 0,
+        "units": "mm"
+    }
+}
+
+Notes:
+- All dimensions should be in the specified units (default: mm)
+- For threaded holes, use standard metric sizes: M2, M2.5, M3, M4, M5, M6, M8, M10, M12, M14, M16, M20
+- When modifying dimensions, use "delta" for relative changes (+10 to make 10mm longer, -10 to make 10mm shorter)
+- For fillets and chamfers, the user must first select edges in SolidWorks
+- x, y coordinates specify the position of features on a face
+
+IMPORTANT: If the user's request is unclear, ask for clarification. Always try to infer reasonable defaults from context."""
+
+# System prompt for model analysis with vision
+ANALYSIS_PROMPT = """You are a SolidWorks CAD expert with vision capabilities. When provided with an image of a 3D model, analyze it thoroughly and describe:
+
+1. **Model Type**: Part, Assembly, or Drawing
+2. **Overall Shape**: Basic geometry (rectangular, cylindrical, complex, etc.)
+3. **Visible Features**: 
+   - Extrusions, cuts, holes
+   - Fillets, chamfers
+   - Patterns (linear, circular)
+   - Any complex features
+4. **Approximate Dimensions**: Estimate proportions and sizes if visible
+5. **Material/Appearance**: If visible (metallic, plastic, etc.)
+6. **Design Intent**: What this part might be used for
+7. **Suggestions**: What modifications or improvements could be made
+
+If model context text is also provided, correlate the visual information with the technical details.
+
+Be specific and technical in your analysis - the user is working in a CAD environment."""
 
 # 1. Health Check
 @app.route('/', methods=['GET'])
@@ -130,24 +288,28 @@ def home():
         "openai_configured": openai_client is not None,
         "claude_available": ANTHROPIC_AVAILABLE,
         "claude_configured": claude_client is not None,
-        "current_provider": ai_provider if (ai_provider == 'claude' and claude_client) or openai_client else "none"
+        "current_provider": ai_provider if (ai_provider == 'claude' and claude_client) or openai_client else "none",
+        "vision_supported": True
     }
     return jsonify(status), 200
 
-# 2. The AI Endpoint
+# 2. The AI Endpoint (with optional image support)
 @app.route('/ask', methods=['POST'])
 def ask_ai():
     try:
         data = request.get_json()
         user_prompt = data.get('prompt', '')
         model_context = data.get('model_context', '')
+        image_base64 = data.get('image', '')  # Base64 encoded image
         
         if not user_prompt:
             return jsonify({"error": "No prompt provided"}), 400
         
-        print(f"🔹 Received from SolidWorks: {user_prompt}")
+        print(f"🔹 Received from SolidWorks: {user_prompt[:100]}...")
         if model_context:
             print(f"📊 Model context provided ({len(model_context)} chars)")
+        if image_base64:
+            print(f"🖼️ Image provided ({len(image_base64)} chars)")
         
         # Build the full prompt with context
         full_prompt = user_prompt
@@ -158,71 +320,125 @@ def ask_ai():
 USER REQUEST:
 {user_prompt}
 
-Please respond considering the current model state."""
+Please respond considering the current model state. If the user is asking for a modification or creation, include the JSON command."""
 
-        # Try Claude first if configured as provider, otherwise try OpenAI
+        # Try Claude first if configured as provider
         if ai_provider == 'claude' and claude_client:
             try:
+                # Build message content for Claude
+                content = []
+                
+                # Add image if provided
+                if image_base64:
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": image_base64
+                        }
+                    })
+                
+                content.append({
+                    "type": "text",
+                    "text": full_prompt
+                })
+                
                 message = claude_client.messages.create(
-                    model="claude-3-5-haiku-20241022",  # Claude Haiku - cheapest option
-                    max_tokens=1000,
+                    model="claude-sonnet-4-20250514" if image_base64 else "claude-3-5-haiku-20241022",
+                    max_tokens=2000,
                     system=SYSTEM_PROMPT,
                     messages=[
-                        {"role": "user", "content": full_prompt}
+                        {"role": "user", "content": content}
                     ]
                 )
                 
                 ai_response = message.content[0].text
                 print(f"✅ Claude response received")
                 
+                # Parse for commands
+                parsed_command = None
+                if command_parser:
+                    parsed = command_parser.parse_response(ai_response)
+                    if parsed.get('success'):
+                        parsed_command = parsed.get('command')
+                
                 return jsonify({
                     "response": ai_response,
                     "source": "claude",
-                    "model": "claude-3-5-haiku"
+                    "model": "claude-sonnet-4" if image_base64 else "claude-3-5-haiku",
+                    "command": parsed_command
                 })
                 
             except Exception as e:
                 print(f"❌ Claude Error: {e}")
-                # Fallback to OpenAI if available
                 if openai_client:
                     print("🔄 Falling back to OpenAI...")
                 else:
-                    ai_response = f"Claude error: {str(e)}\n\nFalling back to mock response.\n\nYour request: '{user_prompt}'"
                     return jsonify({
-                        "response": ai_response,
-                        "source": "fallback",
+                        "response": f"Claude error: {str(e)}",
+                        "source": "error",
                         "error": str(e)
                     })
         
         # Use OpenAI if available
         if openai_client:
             try:
+                # Build messages for OpenAI
+                messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT}
+                ]
+                
+                if image_base64:
+                    # Use vision model with image
+                    user_content = [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_base64}",
+                                "detail": "high"
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": full_prompt
+                        }
+                    ]
+                    messages.append({"role": "user", "content": user_content})
+                    model = "gpt-4o"  # Vision model
+                else:
+                    messages.append({"role": "user", "content": full_prompt})
+                    model = "gpt-4o-mini"  # Cost-effective model
+                
                 response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",  # Cost-effective model
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": full_prompt}
-                    ],
+                    model=model,
+                    messages=messages,
                     temperature=0.7,
-                    max_tokens=1000
+                    max_tokens=2000
                 )
                 
                 ai_response = response.choices[0].message.content
                 print(f"✅ OpenAI response received")
                 
+                # Parse for commands
+                parsed_command = None
+                if command_parser:
+                    parsed = command_parser.parse_response(ai_response)
+                    if parsed.get('success'):
+                        parsed_command = parsed.get('command')
+                
                 return jsonify({
                     "response": ai_response,
                     "source": "openai",
-                    "model": "gpt-4o-mini"
+                    "model": model,
+                    "command": parsed_command
                 })
                 
             except Exception as e:
                 print(f"❌ OpenAI Error: {e}")
-                # Fallback to mock response
-                ai_response = f"OpenAI error: {str(e)}\n\nFalling back to mock response.\n\nYour request: '{user_prompt}'"
                 return jsonify({
-                    "response": ai_response,
-                    "source": "fallback",
+                    "response": f"OpenAI error: {str(e)}",
+                    "source": "error",
                     "error": str(e)
                 })
         else:
@@ -239,35 +455,57 @@ Please respond considering the current model state."""
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# 3. Model Analysis Endpoint
+# 3. Model Analysis Endpoint (with vision support)
 @app.route('/analyze', methods=['POST'])
 def analyze_model():
-    """Analyze and describe a SolidWorks model"""
+    """Analyze and describe a SolidWorks model with optional image"""
     try:
         data = request.get_json()
         model_context = data.get('model_context', '')
+        image_base64 = data.get('image', '')
         
-        if not model_context:
-            return jsonify({"error": "No model context provided"}), 400
+        if not model_context and not image_base64:
+            return jsonify({"error": "No model context or image provided"}), 400
         
-        print(f"📊 Analyzing model ({len(model_context)} chars)")
+        print(f"📊 Analyzing model...")
+        if model_context:
+            print(f"   Context: {len(model_context)} chars")
+        if image_base64:
+            print(f"   Image: {len(image_base64)} chars")
         
         # Build analysis prompt
-        analysis_prompt = f"""Analyze this SolidWorks model information:
-
-{model_context}
-
-Provide a detailed description of what you can understand about this model."""
+        analysis_prompt = "Analyze this SolidWorks model"
+        if model_context:
+            analysis_prompt += f":\n\n{model_context}"
+        if image_base64:
+            analysis_prompt += "\n\nAn image of the model is attached. Please describe what you see."
         
         # Try Claude first if configured
         if ai_provider == 'claude' and claude_client:
             try:
+                content = []
+                
+                if image_base64:
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": image_base64
+                        }
+                    })
+                
+                content.append({
+                    "type": "text",
+                    "text": analysis_prompt
+                })
+                
                 message = claude_client.messages.create(
-                    model="claude-3-5-haiku-20241022",
-                    max_tokens=1500,
+                    model="claude-sonnet-4-20250514" if image_base64 else "claude-3-5-haiku-20241022",
+                    max_tokens=2000,
                     system=ANALYSIS_PROMPT,
                     messages=[
-                        {"role": "user", "content": analysis_prompt}
+                        {"role": "user", "content": content}
                     ]
                 )
                 
@@ -277,7 +515,7 @@ Provide a detailed description of what you can understand about this model."""
                 return jsonify({
                     "response": ai_response,
                     "source": "claude",
-                    "model": "claude-3-5-haiku"
+                    "model": "claude-sonnet-4" if image_base64 else "claude-3-5-haiku"
                 })
             except Exception as e:
                 print(f"❌ Claude Error: {e}")
@@ -292,14 +530,35 @@ Provide a detailed description of what you can understand about this model."""
         # Use OpenAI if available
         if openai_client:
             try:
+                messages = [
+                    {"role": "system", "content": ANALYSIS_PROMPT}
+                ]
+                
+                if image_base64:
+                    user_content = [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_base64}",
+                                "detail": "high"
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": analysis_prompt
+                        }
+                    ]
+                    messages.append({"role": "user", "content": user_content})
+                    model = "gpt-4o"
+                else:
+                    messages.append({"role": "user", "content": analysis_prompt})
+                    model = "gpt-4o-mini"
+                
                 response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": ANALYSIS_PROMPT},
-                        {"role": "user", "content": analysis_prompt}
-                    ],
+                    model=model,
+                    messages=messages,
                     temperature=0.7,
-                    max_tokens=1500
+                    max_tokens=2000
                 )
                 
                 ai_response = response.choices[0].message.content
@@ -308,7 +567,7 @@ Provide a detailed description of what you can understand about this model."""
                 return jsonify({
                     "response": ai_response,
                     "source": "openai",
-                    "model": "gpt-4o-mini"
+                    "model": model
                 })
             except Exception as e:
                 print(f"❌ OpenAI Error: {e}")
@@ -355,14 +614,57 @@ def parse_command():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# 5. Execute Command Endpoint (for direct command execution)
+@app.route('/execute', methods=['POST'])
+def execute_command():
+    """Execute a SolidWorks command directly"""
+    try:
+        data = request.get_json()
+        command = data.get('command', {})
+        
+        if not command:
+            return jsonify({"error": "No command provided"}), 400
+        
+        # Validate command structure
+        action = command.get('action', '')
+        cmd_type = command.get('type', '')
+        parameters = command.get('parameters', {})
+        
+        if not action:
+            return jsonify({"error": "Command missing 'action' field"}), 400
+        
+        # Return the validated command for the C# plugin to execute
+        return jsonify({
+            "success": True,
+            "action": action,
+            "type": cmd_type,
+            "parameters": parameters,
+            "message": f"Command ready for execution: {action} {cmd_type}"
+        })
+        
+    except Exception as e:
+        print(f"❌ Execute Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
-    print("🚀 Starting SolidWorks AI Server...")
+    print("🚀 Starting SolidWorks AI Server with Vision Support...")
+    print("=" * 60)
     print("📝 Configure AI provider:")
     print("   - OpenAI: Set OPENAI_API_KEY environment variable")
     print("   - Claude: Set ANTHROPIC_API_KEY environment variable")
-    print("   - Choose provider: Set AI_PROVIDER=openai or AI_PROVIDER=claude (default: openai)")
-    print("\n💰 Pricing comparison:")
-    print("   - OpenAI GPT-4o-mini: ~$0.15/$0.60 per 1M tokens (input/output)")
-    print("   - Claude Haiku: ~$0.25/$1.25 per 1M tokens (input/output)")
-    print("   - Claude Sonnet: ~$3.00/$15.00 per 1M tokens (input/output)")
+    print("   - Choose provider: Set AI_PROVIDER=openai or AI_PROVIDER=claude")
+    print()
+    print("🖼️ Vision Support:")
+    print("   - Screenshot analysis is enabled")
+    print("   - OpenAI uses gpt-4o for images, gpt-4o-mini for text")
+    print("   - Claude uses claude-sonnet-4 for images, claude-3-5-haiku for text")
+    print()
+    print("💰 Pricing comparison:")
+    print("   - GPT-4o-mini: ~$0.15/$0.60 per 1M tokens")
+    print("   - GPT-4o (vision): ~$2.50/$10.00 per 1M tokens")
+    print("   - Claude Haiku: ~$0.25/$1.25 per 1M tokens")
+    print("   - Claude Sonnet (vision): ~$3.00/$15.00 per 1M tokens")
+    print("=" * 60)
     app.run(host='127.0.0.1', port=5000, debug=True)
