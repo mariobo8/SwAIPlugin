@@ -128,33 +128,39 @@ namespace SwAIPlugin
                 {
                     PartDoc partDoc = swModel as PartDoc;
                     analysis.AppendLine(AnalyzePart(partDoc, swModel));
+                    
+                    // Feature Tree with details
+                    analysis.AppendLine();
+                    analysis.AppendLine("FEATURES:");
+                    analysis.AppendLine(GetDetailedFeatureTree(swModel));
+
+                    // Bounding Box / Dimensions
+                    analysis.AppendLine();
+                    analysis.AppendLine("BOUNDING BOX:");
+                    analysis.AppendLine(GetBoundingBox(swModel));
+
+                    // Mass Properties (if available)
+                    analysis.AppendLine();
+                    analysis.AppendLine("MASS PROPERTIES:");
+                    analysis.AppendLine(GetMassProperties(swModel));
                 }
                 // Assembly-specific analysis
                 else if (swModel.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY)
                 {
                     AssemblyDoc assyDoc = swModel as AssemblyDoc;
                     analysis.AppendLine(AnalyzeAssembly(assyDoc, swModel));
+                    
+                    // Feature Tree
+                    analysis.AppendLine();
+                    analysis.AppendLine("FEATURES:");
+                    analysis.AppendLine(GetDetailedFeatureTree(swModel));
                 }
                 // Drawing-specific analysis
                 else if (swModel.GetType() == (int)swDocumentTypes_e.swDocDRAWING)
                 {
-                    analysis.AppendLine("Drawing document detected.");
+                    DrawingDoc drawDoc = swModel as DrawingDoc;
+                    analysis.AppendLine(AnalyzeDrawing(drawDoc, swModel));
                 }
-
-                // Feature Tree with details
-                analysis.AppendLine();
-                analysis.AppendLine("FEATURES:");
-                analysis.AppendLine(GetDetailedFeatureTree(swModel));
-
-                // Bounding Box / Dimensions
-                analysis.AppendLine();
-                analysis.AppendLine("BOUNDING BOX:");
-                analysis.AppendLine(GetBoundingBox(swModel));
-
-                // Mass Properties (if available)
-                analysis.AppendLine();
-                analysis.AppendLine("MASS PROPERTIES:");
-                analysis.AppendLine(GetMassProperties(swModel));
 
                 return analysis.ToString();
             }
@@ -198,8 +204,8 @@ namespace SwAIPlugin
                 {
                     object[] bodies = bodiesObj as object[];
                     if (bodies != null)
-                    {
-                        info.AppendLine($"  Solid Bodies: {bodies.Length}");
+                {
+                    info.AppendLine($"  Solid Bodies: {bodies.Length}");
                         
                         // Analyze each body
                         for (int i = 0; i < bodies.Length && i < 5; i++)
@@ -233,8 +239,8 @@ namespace SwAIPlugin
                 {
                     object[] surfaceBodies = surfaceBodiesObj as object[];
                     if (surfaceBodies != null && surfaceBodies.Length > 0)
-                    {
-                        info.AppendLine($"  Surface Bodies: {surfaceBodies.Length}");
+                {
+                    info.AppendLine($"  Surface Bodies: {surfaceBodies.Length}");
                     }
                 }
 
@@ -281,8 +287,8 @@ namespace SwAIPlugin
                 {
                     object[] components = componentsObj as object[];
                     if (components != null)
-                    {
-                        info.AppendLine($"  Total Components: {components.Length}");
+                {
+                    info.AppendLine($"  Total Components: {components.Length}");
                         
                         // List first few components
                         for (int i = 0; i < components.Length && i < 10; i++)
@@ -310,6 +316,153 @@ namespace SwAIPlugin
             catch (Exception ex)
             {
                 info.AppendLine($"  Error: {ex.Message}");
+            }
+
+            return info.ToString();
+        }
+
+        private string AnalyzeDrawing(DrawingDoc drawDoc, ModelDoc2 swModel)
+        {
+            StringBuilder info = new StringBuilder();
+            info.AppendLine("=== DRAWING ANALYSIS ===");
+            info.AppendLine();
+            info.AppendLine("Please review this drawing for the following potential issues:");
+            info.AppendLine();
+            
+            try
+            {
+                // Get all sheets
+                object[] sheetNames = drawDoc.GetSheetNames() as object[];
+                int totalSheets = sheetNames != null ? sheetNames.Length : 0;
+                info.AppendLine($"SHEETS: {totalSheets}");
+                
+                int totalViews = 0;
+                int totalDimensions = 0;
+                int totalAnnotations = 0;
+                bool hasDetailView = false;
+                bool hasSectionView = false;
+                bool hasIsometricView = false;
+                
+                // Analyze each sheet
+                if (sheetNames != null)
+                {
+                    foreach (string sheetName in sheetNames)
+                    {
+                        Sheet sheet = drawDoc.Sheet[sheetName] as Sheet;
+                        if (sheet == null) continue;
+                        
+                        info.AppendLine();
+                        info.AppendLine($"  Sheet: {sheetName}");
+                        
+                        // Get sheet properties
+                        double width = 0, height = 0;
+                        sheet.GetSize(ref width, ref height);
+                        info.AppendLine($"    Size: {width * 1000:F0} x {height * 1000:F0} mm");
+                        
+                        // Get scale
+                        double scale = sheet.GetProperties2()[2];
+                        info.AppendLine($"    Scale: 1:{1/scale:F0}");
+                        
+                        // Get views on this sheet
+                        object[] views = drawDoc.GetViews()[0] as object[];
+                        if (views != null)
+                        {
+                            int sheetViewCount = 0;
+                            foreach (View view in views)
+                            {
+                                if (view == null) continue;
+                                sheetViewCount++;
+                                totalViews++;
+                                
+                                string viewType = view.Type.ToString();
+                                string viewName = view.Name;
+                                
+                                // Check view types
+                                if (viewType.Contains("Detail")) hasDetailView = true;
+                                if (viewType.Contains("Section")) hasSectionView = true;
+                                if (viewName.ToLower().Contains("isometric") || viewName.ToLower().Contains("iso"))
+                                    hasIsometricView = true;
+                                
+                                // Count dimensions in this view
+                                DisplayDimension dispDim = view.GetFirstDisplayDimension5() as DisplayDimension;
+                                int viewDimCount = 0;
+                                while (dispDim != null)
+                                {
+                                    viewDimCount++;
+                                    totalDimensions++;
+                                    dispDim = dispDim.GetNext5() as DisplayDimension;
+                                }
+                                
+                                // Count annotations
+                                object[] annots = view.GetAnnotations() as object[];
+                                if (annots != null)
+                                {
+                                    totalAnnotations += annots.Length;
+                                }
+                            }
+                            info.AppendLine($"    Views: {sheetViewCount}");
+                        }
+                    }
+                }
+                
+                info.AppendLine();
+                info.AppendLine("SUMMARY:");
+                info.AppendLine($"  Total Views: {totalViews}");
+                info.AppendLine($"  Total Dimensions: {totalDimensions}");
+                info.AppendLine($"  Total Annotations: {totalAnnotations}");
+                info.AppendLine($"  Has Detail View: {(hasDetailView ? "Yes" : "No")}");
+                info.AppendLine($"  Has Section View: {(hasSectionView ? "Yes" : "No")}");
+                info.AppendLine($"  Has Isometric View: {(hasIsometricView ? "Yes" : "No")}");
+                
+                // Potential issues to check
+                info.AppendLine();
+                info.AppendLine("ITEMS TO REVIEW:");
+                
+                if (totalDimensions == 0)
+                {
+                    info.AppendLine("  ⚠ WARNING: No dimensions found - drawing may be incomplete");
+                }
+                else if (totalDimensions < 5)
+                {
+                    info.AppendLine("  ⚠ NOTE: Very few dimensions - verify all critical dimensions are present");
+                }
+                
+                if (totalViews == 0)
+                {
+                    info.AppendLine("  ⚠ WARNING: No views found - drawing appears empty");
+                }
+                else if (totalViews == 1)
+                {
+                    info.AppendLine("  ⚠ NOTE: Only one view - consider adding additional views for clarity");
+                }
+                
+                if (!hasIsometricView)
+                {
+                    info.AppendLine("  ℹ SUGGESTION: Consider adding an isometric view for better visualization");
+                }
+                
+                if (!hasDetailView && !hasSectionView)
+                {
+                    info.AppendLine("  ℹ SUGGESTION: Consider adding detail or section views for complex features");
+                }
+                
+                info.AppendLine();
+                info.AppendLine("AI REVIEW REQUEST:");
+                info.AppendLine("Please analyze the attached screenshot and check for:");
+                info.AppendLine("  1. Missing dimensions (especially critical ones)");
+                info.AppendLine("  2. Proper view arrangement and alignment");
+                info.AppendLine("  3. Correct scale usage");
+                info.AppendLine("  4. Title block completeness");
+                info.AppendLine("  5. Proper tolerancing and GD&T symbols");
+                info.AppendLine("  6. Clear leader lines and annotations");
+                info.AppendLine("  7. Hidden lines visibility settings");
+                info.AppendLine("  8. Overall drawing clarity and readability");
+            }
+            catch (Exception ex)
+            {
+                info.AppendLine($"  Error analyzing drawing: {ex.Message}");
+                info.AppendLine();
+                info.AppendLine("Please analyze the screenshot visually for drawing quality issues.");
             }
 
             return info.ToString();
@@ -557,7 +710,7 @@ namespace SwAIPlugin
             {
                 props.AppendLine($"  Error: {ex.Message}");
             }
-
+            
             return props.ToString();
         }
 

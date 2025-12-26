@@ -261,23 +261,49 @@ Notes:
 IMPORTANT: If the user's request is unclear, ask for clarification. Always try to infer reasonable defaults from context."""
 
 # System prompt for model analysis with vision
-ANALYSIS_PROMPT = """You are a SolidWorks CAD expert with vision capabilities. When provided with an image of a 3D model, analyze it thoroughly and describe:
+ANALYSIS_PROMPT = """You are a SolidWorks CAD expert with vision capabilities. Analyze the provided image and context.
 
-1. **Model Type**: Part, Assembly, or Drawing
-2. **Overall Shape**: Basic geometry (rectangular, cylindrical, complex, etc.)
-3. **Visible Features**: 
-   - Extrusions, cuts, holes
-   - Fillets, chamfers
-   - Patterns (linear, circular)
-   - Any complex features
-4. **Approximate Dimensions**: Estimate proportions and sizes if visible
-5. **Material/Appearance**: If visible (metallic, plastic, etc.)
-6. **Design Intent**: What this part might be used for
-7. **Suggestions**: What modifications or improvements could be made
+## FOR 3D MODELS (Parts/Assemblies):
+1. **Overall Shape**: Basic geometry description
+2. **Visible Features**: Extrusions, cuts, holes, fillets, chamfers, patterns
+3. **Approximate Dimensions**: Estimate sizes if visible
+4. **Design Intent**: What this part might be used for
+5. **Suggestions**: Improvements or modifications
 
-If model context text is also provided, correlate the visual information with the technical details.
+## FOR ENGINEERING DRAWINGS:
+When analyzing a drawing, act as a quality control engineer and check for:
 
-Be specific and technical in your analysis - the user is working in a CAD environment."""
+### CRITICAL ISSUES (must fix):
+- ❌ Missing dimensions for manufacturing
+- ❌ Ambiguous or unclear dimensions
+- ❌ Incorrect or missing tolerances
+- ❌ Missing critical views
+- ❌ Scale inconsistencies
+- ❌ Overlapping or crossing dimension lines
+
+### IMPORTANT ISSUES (should fix):
+- ⚠️ Poor dimension placement or organization
+- ⚠️ Missing center marks or centerlines
+- ⚠️ Incomplete title block information
+- ⚠️ Missing material callouts
+- ⚠️ GD&T symbols missing where needed
+- ⚠️ Section or detail views needed but missing
+
+### SUGGESTIONS (nice to have):
+- 💡 Better view arrangement
+- 💡 Add isometric view for clarity
+- 💡 Improve leader line routing
+- 💡 Add surface finish symbols
+- 💡 Consolidate dimensions
+- 💡 Use proper standards (ISO/ASME)
+
+### FORMAT YOUR RESPONSE AS:
+1. **Summary**: One-line overall assessment
+2. **Issues Found**: List each issue with severity (❌/⚠️/💡)
+3. **Recommendations**: Specific actions to fix issues
+4. **Overall Score**: Rate 1-10 for manufacturing readiness
+
+Be specific and actionable - this drawing may be sent to manufacturing."""
 
 # 1. Health Check
 @app.route('/', methods=['GET'])

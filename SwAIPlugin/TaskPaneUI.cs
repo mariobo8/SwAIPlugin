@@ -521,7 +521,16 @@ namespace SwAIPlugin
         private void TaskPaneUI_Load(object sender, EventArgs e)
         {
             // Welcome message
-            AppendMessage("AI", "Hi! I'm your SolidWorks assistant.\n\nTry commands like:\n• Create a 100x50x25 box\n• Create a cylinder 30mm diameter\n• Add 4 M6 threaded holes\n• Make it 10mm longer", colorAI);
+            AppendMessage("AI", "Hi! I'm your SolidWorks assistant.\n\n" +
+                "FOR PARTS:\n" +
+                "• Create a 100x50x25 box\n" +
+                "• Create a cylinder 30mm diameter\n" +
+                "• Add 4 M6 threaded holes\n" +
+                "• Make it 10mm longer\n\n" +
+                "FOR DRAWINGS:\n" +
+                "• Analyze this drawing\n" +
+                "• Check for missing dimensions\n" +
+                "• Review for manufacturing", colorAI);
         }
 
         // Legacy event handlers (keep for compatibility)
