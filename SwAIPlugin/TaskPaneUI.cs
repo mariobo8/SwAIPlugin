@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using SolidWorks.Interop.sldworks;
 
 namespace SwAIPlugin
 {
@@ -18,6 +19,12 @@ namespace SwAIPlugin
         // HTTP Client for communicating with Python backend
         private static readonly HttpClient httpClient = new HttpClient();
         private const string BACKEND_URL = "http://127.0.0.1:5000/ask";
+        private const string ANALYZE_URL = "http://127.0.0.1:5000/analyze";
+        
+        // SolidWorks application reference
+        private SldWorks swApp;
+        private ModelAnalyzer modelAnalyzer;
+        private SolidWorksCommandExecutor commandExecutor;
 
         public TaskPaneUI()
         {
@@ -26,6 +33,19 @@ namespace SwAIPlugin
             // 1. Set up the Input Box (assuming textBox1 is your input box at the bottom)
             // If your input box is textBox2, just change "textBox1" to "textBox2" below.
             SetupPlaceholder(this.textBox1);
+        }
+
+        /// <summary>
+        /// Sets the SolidWorks application reference (called from SwAddin)
+        /// </summary>
+        public void SetSolidWorksApp(SldWorks app)
+        {
+            swApp = app;
+            if (swApp != null)
+            {
+                modelAnalyzer = new ModelAnalyzer(swApp);
+                commandExecutor = new SolidWorksCommandExecutor(swApp);
+            }
         }
 
         private void SetupPlaceholder(TextBox txt)
@@ -81,8 +101,11 @@ namespace SwAIPlugin
 
             try
             {
-                // Send HTTP POST request to Python backend
-                string response = await SendToBackendAsync(userPrompt);
+                // Get model context if available
+                string modelContext = GetModelContext();
+                
+                // Send HTTP POST request to Python backend with context
+                string response = await SendToBackendAsync(userPrompt, modelContext);
                 
                 // Display the response in textBox2
                 textBox2.Text = response;
@@ -109,12 +132,78 @@ namespace SwAIPlugin
         }
 
         /// <summary>
-        /// Sends a POST request to the Python backend with the user's prompt
+        /// Gets model context for AI analysis
         /// </summary>
-        private async Task<string> SendToBackendAsync(string prompt)
+        private string GetModelContext()
         {
-            // Create JSON payload
-            string jsonPayload = $"{{\"prompt\": \"{EscapeJsonString(prompt)}\"}}";
+            if (modelAnalyzer == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return modelAnalyzer.AnalyzeModel();
+            }
+            catch (Exception ex)
+            {
+                return $"Error getting model context: {ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// Analyzes the current model and sends description to AI
+        /// </summary>
+        public async Task<string> AnalyzeModelAsync()
+        {
+            if (modelAnalyzer == null)
+            {
+                return "Error: SolidWorks not connected. Please restart the add-in.";
+            }
+
+            try
+            {
+                string modelContext = GetModelContext();
+                
+                if (string.IsNullOrEmpty(modelContext) || modelContext.Contains("No active model"))
+                {
+                    return modelContext ?? "No model information available.";
+                }
+
+                // Send to analyze endpoint
+                string jsonPayload = $"{{\"model_context\": \"{EscapeJsonString(modelContext)}\"}}";
+                StringContent content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+                
+                HttpResponseMessage response = await httpClient.PostAsync(ANALYZE_URL, content);
+                response.EnsureSuccessStatusCode();
+                
+                string responseBody = await response.Content.ReadAsStringAsync();
+                return ExtractResponseFromJson(responseBody);
+            }
+            catch (Exception ex)
+            {
+                return $"Error analyzing model: {ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// Sends a POST request to the Python backend with the user's prompt and model context
+        /// </summary>
+        private async Task<string> SendToBackendAsync(string prompt, string modelContext = null)
+        {
+            // Create JSON payload with optional model context
+            StringBuilder jsonBuilder = new StringBuilder();
+            jsonBuilder.Append("{");
+            jsonBuilder.Append($"\"prompt\": \"{EscapeJsonString(prompt)}\"");
+            
+            if (!string.IsNullOrEmpty(modelContext))
+            {
+                jsonBuilder.Append($", \"model_context\": \"{EscapeJsonString(modelContext)}\"");
+            }
+            
+            jsonBuilder.Append("}");
+            
+            string jsonPayload = jsonBuilder.ToString();
             
             // Create HTTP content
             StringContent content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
@@ -199,6 +288,41 @@ namespace SwAIPlugin
             catch
             {
                 return json; // Return raw JSON if parsing fails
+            }
+        }
+
+        /// <summary>
+        /// Analyze button click handler
+        /// </summary>
+        private async void button2_Click(object sender, EventArgs e)
+        {
+            // Disable the button and show loading state
+            button2.Enabled = false;
+            button2.Text = "Analyzing...";
+            textBox2.Text = "Analyzing current model...";
+            textBox2.ForeColor = Color.Gray;
+
+            try
+            {
+                // Analyze the model
+                string response = await AnalyzeModelAsync();
+                
+                // Display the response
+                textBox2.Text = response;
+                textBox2.ForeColor = Color.Black;
+            }
+            catch (Exception ex)
+            {
+                string errorMsg = $"Error: {ex.Message}\n\nMake sure the Python server is running on http://127.0.0.1:5000";
+                textBox2.Text = errorMsg;
+                textBox2.ForeColor = Color.Red;
+                MessageBox.Show(errorMsg, "Analysis Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                // Re-enable the button
+                button2.Enabled = true;
+                button2.Text = "🔍 Analyze Current Model";
             }
         }
 

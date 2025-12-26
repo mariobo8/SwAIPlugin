@@ -107,7 +107,19 @@ Command format:
     "description": "Human-readable description"
 }
 
-If the user's request is unclear or cannot be translated to a SolidWorks command, explain what you understood and ask for clarification."""
+If the user's request is unclear or cannot be translated to a SolidWorks command, explain what you understood and ask for clarification.
+
+IMPORTANT: If you receive model context information, use it to understand the current state of the model and provide context-aware responses."""
+
+# System prompt for model analysis
+ANALYSIS_PROMPT = """You are a SolidWorks CAD expert. Analyze the provided model information and describe:
+1. What type of model it is (Part, Assembly, Drawing)
+2. Key features and their purposes
+3. Overall geometry and complexity
+4. Any notable characteristics (dimensions, mass properties, etc.)
+5. Potential design considerations or observations
+
+Provide a clear, concise analysis that helps the user understand what the AI can "see" about their model."""
 
 # 1. Health Check
 @app.route('/', methods=['GET'])
@@ -128,21 +140,35 @@ def ask_ai():
     try:
         data = request.get_json()
         user_prompt = data.get('prompt', '')
+        model_context = data.get('model_context', '')
         
         if not user_prompt:
             return jsonify({"error": "No prompt provided"}), 400
         
         print(f"🔹 Received from SolidWorks: {user_prompt}")
+        if model_context:
+            print(f"📊 Model context provided ({len(model_context)} chars)")
+        
+        # Build the full prompt with context
+        full_prompt = user_prompt
+        if model_context:
+            full_prompt = f"""CURRENT MODEL CONTEXT:
+{model_context}
+
+USER REQUEST:
+{user_prompt}
+
+Please respond considering the current model state."""
 
         # Try Claude first if configured as provider, otherwise try OpenAI
         if ai_provider == 'claude' and claude_client:
             try:
                 message = claude_client.messages.create(
                     model="claude-3-5-haiku-20241022",  # Claude Haiku - cheapest option
-                    max_tokens=500,
+                    max_tokens=1000,
                     system=SYSTEM_PROMPT,
                     messages=[
-                        {"role": "user", "content": user_prompt}
+                        {"role": "user", "content": full_prompt}
                     ]
                 )
                 
@@ -175,10 +201,10 @@ def ask_ai():
                     model="gpt-4o-mini",  # Cost-effective model
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt}
+                        {"role": "user", "content": full_prompt}
                     ],
                     temperature=0.7,
-                    max_tokens=500
+                    max_tokens=1000
                 )
                 
                 ai_response = response.choices[0].message.content
@@ -213,7 +239,97 @@ def ask_ai():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# 3. Command Parsing Endpoint
+# 3. Model Analysis Endpoint
+@app.route('/analyze', methods=['POST'])
+def analyze_model():
+    """Analyze and describe a SolidWorks model"""
+    try:
+        data = request.get_json()
+        model_context = data.get('model_context', '')
+        
+        if not model_context:
+            return jsonify({"error": "No model context provided"}), 400
+        
+        print(f"📊 Analyzing model ({len(model_context)} chars)")
+        
+        # Build analysis prompt
+        analysis_prompt = f"""Analyze this SolidWorks model information:
+
+{model_context}
+
+Provide a detailed description of what you can understand about this model."""
+        
+        # Try Claude first if configured
+        if ai_provider == 'claude' and claude_client:
+            try:
+                message = claude_client.messages.create(
+                    model="claude-3-5-haiku-20241022",
+                    max_tokens=1500,
+                    system=ANALYSIS_PROMPT,
+                    messages=[
+                        {"role": "user", "content": analysis_prompt}
+                    ]
+                )
+                
+                ai_response = message.content[0].text
+                print(f"✅ Claude analysis received")
+                
+                return jsonify({
+                    "response": ai_response,
+                    "source": "claude",
+                    "model": "claude-3-5-haiku"
+                })
+            except Exception as e:
+                print(f"❌ Claude Error: {e}")
+                if openai_client:
+                    print("🔄 Falling back to OpenAI...")
+                else:
+                    return jsonify({
+                        "response": f"Error analyzing model: {str(e)}",
+                        "source": "error"
+                    }), 500
+        
+        # Use OpenAI if available
+        if openai_client:
+            try:
+                response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": ANALYSIS_PROMPT},
+                        {"role": "user", "content": analysis_prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1500
+                )
+                
+                ai_response = response.choices[0].message.content
+                print(f"✅ OpenAI analysis received")
+                
+                return jsonify({
+                    "response": ai_response,
+                    "source": "openai",
+                    "model": "gpt-4o-mini"
+                })
+            except Exception as e:
+                print(f"❌ OpenAI Error: {e}")
+                return jsonify({
+                    "response": f"Error analyzing model: {str(e)}",
+                    "source": "error"
+                }), 500
+        else:
+            # Fallback: return raw model context
+            return jsonify({
+                "response": f"Model Analysis (AI not configured):\n\n{model_context}",
+                "source": "raw"
+            })
+            
+    except Exception as e:
+        print(f"❌ Analysis Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# 4. Command Parsing Endpoint
 @app.route('/parse_command', methods=['POST'])
 def parse_command():
     """Parse AI response into executable SolidWorks commands"""

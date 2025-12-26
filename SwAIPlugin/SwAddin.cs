@@ -65,6 +65,12 @@ namespace SwAIPlugin
             // Load your UserControl into the Task Pane
             // valid progId or empty string for .NET controls
             taskPaneControl = (TaskPaneUI)taskPaneView.AddControl("SwAIPlugin.TaskPaneUI", "");
+            
+            // Pass SolidWorks application reference to the UI
+            if (taskPaneControl != null)
+            {
+                taskPaneControl.SetSolidWorksApp(swApp);
+            }
         }
 
         public void RemoveTaskPane()
