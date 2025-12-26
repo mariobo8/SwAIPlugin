@@ -44,16 +44,26 @@ ai_provider = os.getenv('AI_PROVIDER', 'openai').lower()  # Default to OpenAI
 if OPENAI_AVAILABLE:
     api_key = os.getenv('OPENAI_API_KEY')
     if api_key:
-        openai_client = OpenAI(api_key=api_key)
-        print("✅ OpenAI client initialized")
+        try:
+            openai_client = OpenAI(api_key=api_key)
+            print("✅ OpenAI client initialized")
+        except Exception as e:
+            print(f"❌ Failed to initialize OpenAI client: {e}")
+            print("💡 Try updating: pip install --upgrade openai httpx")
+            OPENAI_AVAILABLE = False  # Disable OpenAI to prevent further errors
     else:
         print("⚠️  OPENAI_API_KEY not found in environment variables")
 
 if ANTHROPIC_AVAILABLE:
     api_key = os.getenv('ANTHROPIC_API_KEY')
     if api_key:
-        claude_client = anthropic.Anthropic(api_key=api_key)
-        print("✅ Claude (Anthropic) client initialized")
+        try:
+            claude_client = anthropic.Anthropic(api_key=api_key)
+            print("✅ Claude (Anthropic) client initialized")
+        except Exception as e:
+            print(f"❌ Failed to initialize Claude client: {e}")
+            print("💡 Try updating: pip install --upgrade anthropic")
+            ANTHROPIC_AVAILABLE = False  # Disable Claude to prevent further errors
     else:
         print("⚠️  ANTHROPIC_API_KEY not found in environment variables")
 
